@@ -1,0 +1,186 @@
+---
+title: "Stat 435 Project 1"
+author: 
+     - "Andrews, Clancy (11674964)"
+     - "Yu-Tung, Cheng (11678647)"
+header-includes:
+   - \usepackage{bbm}
+   - \usepackage{amssymb}
+   - \usepackage{amsmath}
+   - \usepackage{graphicx}
+   - \usepackage{natbib}
+   - \usepackage{float}
+   - \floatplacement{figure}{H}
+output:
+  pdf_document: default
+fontsize: 11pt
+---
+
+```{r, echo=FALSE, warning=FALSE}
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+# General guidelines
+
+Please show your work in order to get points. Providing correct answers without supporting details does not receive full credits. This project requires you to synthesize your knowledge on linear models and model selection, apply such knowledge to a dataset, make scientific discoveries, and concisely present your findings. *Please follow the rubrics on projects given in the syllabus.* This project can be done by up to 2 students as a group assignment. Please write each team member's name and student ID on your report, and only one copy of your report needs to be submitted.
+
+You DO NOT have to submit your project report using typesetting software. However, your answers must be legible for grading. Please upload your answers to the course space. Specifically, if you are not able to knit a .Rmd/.rmd file into an output file such as a .pdf, .doc, .docx or .html file that contains your codes, outputs from your codes, your interpretations on the outputs, and your answers in text (possibly with math expressions), you can organize your codes, their outputs and your answers in a document in the format given below:
+
+```
+Problem or task or question ... 
+Codes ...
+Outputs ...
+Your interpretations ...
+```
+
+It is absolutely not OK to just submit your codes only. This will result in a considerable loss of points on your assignments or projects.
+
+
+# Dataset and its description
+
+Please use the data set `Boston` (which is contained in the library `MASS`). This data set contains $506$ observations on $14$ variables. The response variable is `medv`, and the rest are potential predictors. Namely, we are interested in predicting `medv` using a linear model. Please make sure you fully understand the meaning and type of each variable in the data set.
+
+```{r "Load_Libraries", warning=FALSE}
+library(MASS)
+library(leaps)
+library(caTools)
+library(dplyr)
+library(glmnet)
+library(hdi)
+str(Boston)
+names(Boston)
+```
+
+# Tasks
+\bigbreak
+**(0) Please use `set.seed(1)` for all operations that involve user-induced randomness (such as the command `sample` for resampling from a data set, `cv.glmnet` for cross-validation on the LASSO method or ridge regression, etc). Otherwise, your results will *not be reproducible* when they are checked and graded.**
+\bigbreak
+**(1) Please *randomly split (using the `sample` command)* the observations into a training set and a validation set, so that the training set can be used to fit a linear model, and the validation set can be used to evaluate the prediction accuracy of the fitted model. Here you have the freedom on splitting. But please be careful with the number of observations for each set, since a training set with a few observations cannot produce a relatively good fitted model. Caution: these 2 sets should be non-intersecting; sample from the row indices but do not sample with replacement when creating the two sets.**
+
+```{r "Split_Data"}
+# Splitting the data into training and testing sets. 
+# Split ratio is 75% training data, 25% testing data
+set.seed(1)
+split = sample.split(Boston, SplitRatio = 0.75)
+train = subset(Boston, split == T)
+test = subset(Boston, split == F)
+```
+
+\bigbreak
+**(2) Apply best subset selection on all potential predictors without interactions between them, report the best model and its fitted model, perform model diagnostics on the model, conduct hypothesis tests on some coefficients of the model and report your findings, and assess the prediction accuracy of the fitted model and report your findings. Note: you can use the mean squared error to measure prediction accuracy.**
+
+```{r "Best Subset Selection"}
+# Applying best subset selection on all predictors with response variable being medv
+regfit.full=regsubsets(medv~.,data=train,nvmax=13)
+# Summary of Best subset selection output
+reg.summary=summary(regfit.full)
+reg.summary
+
+# Best Models according to RSS, adjusted R^2, CP, and BIC
+best.models = data.frame(
+  adj.rsq = which.max(reg.summary$adjr2),
+  cp = which.min(reg.summary$cp),
+  bic = which.min(reg.summary$bic)
+)
+best.models
+
+# Best Models
+model.11 = lm(medv~.-indus-age, data = train)
+model.9 = lm(medv~.-indus-age-chas-zn, data = train)
+```
+Based on the output above, there are several different models that are considered the best according to different criteria. The model with 11 predictors was considered the best by Adjusted $R^2$ and Mallow's CP. The fitted model with 11 predictors is $y = 36.38 -0.13crim + 0.04zn+2.12chas-17.08nox+3.79rm - 1.43dis + 0.33rad - 0.01tax-ptratio+0.01black-0.52lstat$. The model with 11 predictors was considered by Bayesian Information Criterion. The fitted model with 9 predictors is $y = 37.02 -0.12crim-17.38nox+4.01rm - 1.20dis + 0.33rad - 0.01tax-1.15ptratio+0.01black-0.51lstat$.
+```{r "Model with 11 Predictors"}
+summary(model.11)
+```
+Based on the outputs for the model with 11 predictors, we have a p-value of `r summary(model.11)$fstatistic %>% {unname(pf(.[1],.[2],.[3],lower.tail=F))}` and an Adjusted $R^2$ of `r summary(model.11)$adj.r.squared`.
+
+```{r "Model with 9 Predictors"}
+summary(model.9)
+```
+Based on the outputs for the model with 9 predictors, we have a p-value of `r summary(model.9)$fstatistic %>% {unname(pf(.[1],.[2],.[3],lower.tail=F))}` and an Adjusted $R^2$ of `r summary(model.9)$adj.r.squared`. To test the best model, we will go with the Adjusted $R^2$ criteria, which means we will use the model with 11 predictors. The p-values for the coefficients in the model with 11 predictors are shown below:
+
+```{r}
+summary(model.11)$coefficients[,4]
+```
+
+```{r "MSE"}
+# Validating fitted model on test set
+pred=predict(model.11,newdata=test)
+# Calculating Accuracy
+MSE=mean((test$medv-pred)^2)
+# Printing MSE
+print(MSE)
+```
+As observed in the output, we get a mean squared error of `r MSE`.
+\bigbreak
+**(3) Implement LASSO (with cross-validation to select the optimal tuning parameter) on all potential predictors without interactions between them, report the best model (that is based on the optimal tuning parameter) and its fitted model, conduct hypothesis tests on some coefficients of the model and report your findings, and assess the prediction accuracy of the fitted model and report your findings.**
+
+```{r "Lasso", warning=FALSE}
+set.seed(1)
+grid = 10^seq(10, -2, length = 100)
+
+# Splitting off predictor and response data
+x_train = select(train, -medv)
+y_train = select(train, medv)
+x_test = select(test, -medv)
+y_test = select(test, medv)
+
+lasso.mod = glmnet(x_train, y_train$medv, alpha = 1, lambda = grid)
+plot(lasso.mod)
+
+# Cross Validation on training data
+set.seed(1)
+cv.out = cv.glmnet(as.matrix(x_train), y_train$medv, alpha = 0)
+plot(cv.out)
+# Lambda that minimizes testing MSE
+bestlam = cv.out$lambda.min
+
+best.model = glmnet(x_train, y_train$medv, alpha = 1, lambda = bestlam)
+coef(best.model)
+```
+The best lambda value that minimizes the testing MSE is `r bestlam`. When using the best lambda in our Lasso model, we get the best model (coefficients above):
+$$y = 14.27 - 0.01crim + 0.14chas+4.09rm-0.75ptratio+0.01black-0.48lstat.$$
+
+```{r}
+lasso_pred = predict(lasso.mod, s = bestlam, newx = as.matrix(x_test)) 
+
+out = glmnet(x_test, y_test$medv, alpha = 1, lambda = grid) 
+
+# Fit lasso model on full dataset
+lasso_coef = predict(out, type = "coefficients", s = bestlam)[1:14,] 
+
+# Display coefficients using lambda chosen by CV
+lasso_coef
+```
+Above we can see the Lasso coefficients.
+```{r}
+# Display only non-zero coefficients
+lasso_coef[lasso_coef != 0] 
+
+#interpretation: Know that we can see the relationship between log lambda and the MSE, we are going to find the best lambda that reduces the error the most for the lasso model and test it on the hold-out data.
+```
+Above we can see the Lasso coefficients that are non-zero. The p-values for the coefficients in the Lasso model are shown below:
+```{r, warning=FALSE}
+hypo = lasso.proj(x_train,y_train$medv, family = "gaussian", standardize = TRUE,
+                    multiplecorr.method = "none")
+hypo$pval[which(hypo$pval < 0.1)]
+```
+
+```{r}
+# Calculate test MSE
+Lasso.MSE = mean((lasso_pred - y_test$medv)^2) 
+```
+Based on the testing data set used in Lasso, we have a following mean squared error of `r Lasso.MSE`.
+
+\bigbreak
+**(5) Among the best/optimal models you would find in (2) and (3) respectively, which one has the best prediction accuracy? If you consider a trade-off between the number of predictors in a model and its prediction accuracy, which among the best models you found in (2) and (3) would you prefer?**
+
+According to the analysis conducted, best subset selection had a smaller mean squared error of `r MSE` while Lasso had a mean squared error of `r Lasso.MSE`. However, given the quantity of predictors in Lasso versus best subset, and the small difference in mean squared error between those models, we would prefer to use the Lasso model for future data prediction.
+
+
+\pagebreak
+```{r}
+# License Information
+sessionInfo()
+```
